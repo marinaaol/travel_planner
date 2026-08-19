@@ -67,7 +67,34 @@ public class VoyageDbContext : DbContext
         entity.Property(roteiro => roteiro.UsuarioId)
             .HasColumnName("usuario_id");
     });
+    
+    modelBuilder.Entity<Atividade>(entity =>
+    {
+        entity.ToTable("atividades");
 
+        entity.HasKey(atividade => atividade.AtividadeId);
+
+        entity.Property(atividade => atividade.AtividadeId)
+            .HasColumnName("atividade_id");
+
+        entity.Property(atividade => atividade.Nome)
+            .HasColumnName("nome");
+
+        entity.Property(atividade => atividade.Tipo)
+            .HasColumnName("tipo");
+
+        entity.Property(atividade => atividade.Valor)
+            .HasColumnName("valor");
+
+        entity.Property(atividade => atividade.DataAtividade)
+            .HasColumnName("data_atividade");
+
+        entity.Property(atividade => atividade.Hora)
+            .HasColumnName("hora");
+
+        entity.Property(atividade => atividade.RoteiroId)
+            .HasColumnName("roteiro_id");
+    });
 
 }
 }
