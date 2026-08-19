@@ -17,4 +17,30 @@ public class VoyageDbContext : DbContext
     public DbSet<Atividade> Atividades {get; set;} = null!; 
 
     // null! apenas informa ao C# que o Entity Framework preencherá estas propriedades quando a aplicação arrancar.
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+
+    modelBuilder.Entity<Usuario>(entity =>
+    {
+        entity.ToTable("usuarios");
+
+        entity.HasKey(usuario => usuario.Id);
+
+        entity.Property(usuario => usuario.Id)
+            .HasColumnName("id");
+
+        entity.Property(usuario => usuario.Nome)
+            .HasColumnName("nome");
+
+        entity.Property(usuario => usuario.Email)
+            .HasColumnName("email");
+
+        entity.Property(usuario => usuario.SenhaHash)
+            .HasColumnName("senha_hash");
+
+        entity.Property(usuario => usuario.CriadoEm)
+            .HasColumnName("criado_em");
+    });
+}
 }
