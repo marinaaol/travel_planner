@@ -1,0 +1,15 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+
+# Dados sensíveis locais
+appsettings.Development.json
+.env
+
+# Sistema operativo e editor
+.DS_Store
+.vscode/
+
+appsettings.Development.json
