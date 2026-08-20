@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Voyage.Api.Data;
+using Voyage.Api.Contracts;
+using Voyage.Api.Models;
 
 namespace Voyage.Api.Controllers;
 
@@ -34,5 +36,60 @@ public class AtividadesController : ControllerBase
             .ToListAsync();
 
         return Ok(atividades);
+    }
+    [HttpPost]
+    public async Task<IActionResult> Criar([FromBody] CriarAtividadeRequest pedido)
+    {
+        if (pedido.Valor is < 0)
+        {
+            return BadRequest(new
+            {
+                message = "O valor da atividade não pode ser negativo."
+            });
+        }
+
+        var roteiro = await _context.Roteiros
+            .FirstOrDefaultAsync(item => item.RoteiroId == pedido.RoteiroId);
+
+        if (roteiro is null)
+        {
+            return BadRequest(new
+            {
+                message = "O roteiro indicado não existe."
+            });
+        }
+
+        if (pedido.DataAtividade.Date < roteiro.DataInicio.Date ||
+            pedido.DataAtividade.Date > roteiro.DataFim.Date)
+        {
+            return BadRequest(new
+            {
+                message = "A data da atividade deve estar dentro do período do roteiro."
+            });
+        }
+
+        var atividade = new Atividade
+        {
+            Nome = pedido.Nome,
+            Tipo = pedido.Tipo,
+            Valor = pedido.Valor,
+            DataAtividade = pedido.DataAtividade,
+            Hora = pedido.Hora,
+            RoteiroId = pedido.RoteiroId
+        };
+
+        _context.Atividades.Add(atividade);
+        await _context.SaveChangesAsync();
+
+        return Created($"/api/atividades/{atividade.AtividadeId}", new
+        {
+            atividade.AtividadeId,
+            atividade.Nome,
+            atividade.Tipo,
+            atividade.Valor,
+            atividade.DataAtividade,
+            atividade.Hora,
+            atividade.RoteiroId
+        });
     }
 }
