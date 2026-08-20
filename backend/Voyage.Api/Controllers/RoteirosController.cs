@@ -120,4 +120,22 @@ public class RoteirosController : ControllerBase
             roteiro.UsuarioId
         });
     }
+        [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Apagar(int id)
+    {
+        var roteiro = await _context.Roteiros.FindAsync(id);
+
+        if (roteiro is null)
+        {
+            return NotFound(new
+            {
+                message = "O roteiro indicado não existe."
+            });
+        }
+
+        _context.Roteiros.Remove(roteiro);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
 }
