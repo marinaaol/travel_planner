@@ -80,4 +80,44 @@ public class RoteirosController : ControllerBase
             roteiro.UsuarioId
         });
     }
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> Atualizar(
+        int id,
+        [FromBody] AtualizarRoteiroRequest pedido)
+    {
+        if (pedido.DataFim < pedido.DataInicio)
+        {
+            return BadRequest(new
+            {
+                message = "A data de fim não pode ser anterior à data de início."
+            });
+        }
+
+        var roteiro = await _context.Roteiros.FindAsync(id);
+
+        if (roteiro is null)
+        {
+            return NotFound(new
+            {
+                message = "O roteiro indicado não existe."
+            });
+        }
+
+        roteiro.Titulo = pedido.Titulo;
+        roteiro.Destino = pedido.Destino;
+        roteiro.DataInicio = pedido.DataInicio;
+        roteiro.DataFim = pedido.DataFim;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            roteiro.RoteiroId,
+            roteiro.Titulo,
+            roteiro.Destino,
+            roteiro.DataInicio,
+            roteiro.DataFim,
+            roteiro.UsuarioId
+        });
+    }
 }
