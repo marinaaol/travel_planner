@@ -39,8 +39,11 @@ public class VoyageDbContext : DbContext
         entity.Property(usuario => usuario.SenhaHash)
             .HasColumnName("senha_hash");
 
+        // Indica que a data é gerada automaticamente pelo MySQL ao criar o utilizador.
         entity.Property(usuario => usuario.CriadoEm)
-            .HasColumnName("criado_em");
+            .HasColumnName("criado_em")
+            .HasDefaultValueSql("CURRENT_TIMESTAMP")
+            .ValueGeneratedOnAdd();
     });
 
     modelBuilder.Entity<Roteiro>(entity =>
