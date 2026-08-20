@@ -157,4 +157,28 @@ public class AtividadesController : ControllerBase
             atividade.RoteiroId
         });
     }
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Apagar(int id)
+    {
+        // Procura a atividade pelo identificador recebido na URL.
+        var atividade = await _context.Atividades.FindAsync(id);
+
+        // Se não existir, informa que não foi encontrada.
+        if (atividade is null)
+        {
+            return NotFound(new
+            {
+                message = "A atividade indicada não existe."
+            });
+        }
+
+        // Marca a atividade para remoção.
+        _context.Atividades.Remove(atividade);
+
+        // Confirma a remoção na base de dados.
+        await _context.SaveChangesAsync();
+
+        // 204 significa: pedido concluído, sem conteúdo para devolver.
+        return NoContent();
+    }
 }
