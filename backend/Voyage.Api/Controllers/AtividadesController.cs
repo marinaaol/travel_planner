@@ -1,11 +1,15 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Voyage.Api.Data;
 using Voyage.Api.Contracts;
+using Voyage.Api.Data;
 using Voyage.Api.Models;
 
 namespace Voyage.Api.Controllers;
 
+// Exige token JWT para todas as operações com atividades.
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class AtividadesController : ControllerBase
@@ -17,13 +21,35 @@ public class AtividadesController : ControllerBase
         _context = context;
     }
 
+    // Obtém o id do utilizador guardado dentro do token JWT.
+    private int? ObterIdDoUtilizadorAutenticado()
+    {
+        var identificador = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        return int.TryParse(identificador, out var utilizadorId)
+            ? utilizadorId
+            : null;
+    }
+
     [HttpGet]
     public async Task<IActionResult> ObterTodos()
     {
-        var atividades = await _context.Atividades
-            .OrderBy(atividade => atividade.DataAtividade)
-            .ThenBy(atividade => atividade.Hora) //ThenBy é o segundo critério de organização: primeiro por dia e, quando existirem atividades no mesmo dia, por hora — como numa agenda.
-            .Select(atividade => new
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        // Junta atividades e roteiros para mostrar somente atividades
+        // de roteiros pertencentes ao utilizador autenticado.
+        var atividades = await (
+            from atividade in _context.Atividades
+            join roteiro in _context.Roteiros
+                on atividade.RoteiroId equals roteiro.RoteiroId
+            where roteiro.UsuarioId == utilizadorId.Value
+            orderby atividade.DataAtividade, atividade.Hora
+            select new
             {
                 atividade.AtividadeId,
                 atividade.Nome,
@@ -32,14 +58,23 @@ public class AtividadesController : ControllerBase
                 atividade.DataAtividade,
                 atividade.Hora,
                 atividade.RoteiroId
-            })
-            .ToListAsync();
+            }
+        ).ToListAsync();
 
         return Ok(atividades);
     }
+
     [HttpPost]
-    public async Task<IActionResult> Criar([FromBody] CriarAtividadeRequest pedido)
+    public async Task<IActionResult> Criar(
+        [FromBody] CriarAtividadeRequest pedido)
     {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
         if (pedido.Valor is < 0)
         {
             return BadRequest(new
@@ -48,19 +83,22 @@ public class AtividadesController : ControllerBase
             });
         }
 
+        // Confirma que o roteiro existe e pertence ao utilizador do token.
         var roteiro = await _context.Roteiros
-            .FirstOrDefaultAsync(item => item.RoteiroId == pedido.RoteiroId);
+            .FirstOrDefaultAsync(roteiro =>
+                roteiro.RoteiroId == pedido.RoteiroId &&
+                roteiro.UsuarioId == utilizadorId.Value);
 
         if (roteiro is null)
         {
-            return BadRequest(new
+            return NotFound(new
             {
                 message = "O roteiro indicado não existe."
             });
         }
 
-        if (pedido.DataAtividade.Date < roteiro.DataInicio.Date ||
-            pedido.DataAtividade.Date > roteiro.DataFim.Date)
+        if (pedido.DataAtividade < roteiro.DataInicio ||
+            pedido.DataAtividade > roteiro.DataFim)
         {
             return BadRequest(new
             {
@@ -92,12 +130,19 @@ public class AtividadesController : ControllerBase
             atividade.RoteiroId
         });
     }
+
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Atualizar(
         int id,
         [FromBody] AtualizarAtividadeRequest pedido)
     {
-        // Impede que uma atividade seja gravada com valor negativo.
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
         if (pedido.Valor is < 0)
         {
             return BadRequest(new
@@ -105,8 +150,16 @@ public class AtividadesController : ControllerBase
                 message = "O valor da atividade não pode ser negativo."
             });
         }
-        // Procura a atividade existente pelo id recebido na URL.
-        var atividade = await _context.Atividades.FindAsync(id);
+
+        // Procura a atividade e confirma que o respetivo roteiro é do utilizador.
+        var atividade = await (
+            from item in _context.Atividades
+            join roteiro in _context.Roteiros
+                on item.RoteiroId equals roteiro.RoteiroId
+            where item.AtividadeId == id &&
+                  roteiro.UsuarioId == utilizadorId.Value
+            select item
+        ).FirstOrDefaultAsync();
 
         if (atividade is null)
         {
@@ -115,26 +168,30 @@ public class AtividadesController : ControllerBase
                 message = "A atividade indicada não existe."
             });
         }
-        // Confirma que o novo roteiro indicado realmente existe.
-        var roteiro = await _context.Roteiros.FindAsync(pedido.RoteiroId);
 
-        if (roteiro is null)
+        // Confirma que o novo roteiro também pertence ao utilizador.
+        var novoRoteiro = await _context.Roteiros
+            .FirstOrDefaultAsync(roteiro =>
+                roteiro.RoteiroId == pedido.RoteiroId &&
+                roteiro.UsuarioId == utilizadorId.Value);
+
+        if (novoRoteiro is null)
         {
-            return BadRequest(new
+            return NotFound(new
             {
                 message = "O roteiro indicado não existe."
             });
         }
-        // Garante que a data da atividade cabe dentro das datas do novo roteiro.
-        if (pedido.DataAtividade < roteiro.DataInicio ||
-            pedido.DataAtividade > roteiro.DataFim)
+
+        if (pedido.DataAtividade < novoRoteiro.DataInicio ||
+            pedido.DataAtividade > novoRoteiro.DataFim)
         {
             return BadRequest(new
             {
                 message = "A data da atividade deve estar dentro do período do roteiro."
             });
         }
-        // Atualiza os dados da atividade encontrada.
+
         atividade.Nome = pedido.Nome;
         atividade.Tipo = pedido.Tipo;
         atividade.Valor = pedido.Valor;
@@ -142,10 +199,8 @@ public class AtividadesController : ControllerBase
         atividade.Hora = pedido.Hora;
         atividade.RoteiroId = pedido.RoteiroId;
 
-        // Guarda definitivamente as alterações no MySQL.
         await _context.SaveChangesAsync();
 
-        // Devolve a atividade atualizada com HTTP 200 OK.
         return Ok(new
         {
             atividade.AtividadeId,
@@ -157,13 +212,27 @@ public class AtividadesController : ControllerBase
             atividade.RoteiroId
         });
     }
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Apagar(int id)
     {
-        // Procura a atividade pelo identificador recebido na URL.
-        var atividade = await _context.Atividades.FindAsync(id);
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
 
-        // Se não existir, informa que não foi encontrada.
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        // Só encontra a atividade se ela estiver num roteiro do utilizador atual.
+        var atividade = await (
+            from item in _context.Atividades
+            join roteiro in _context.Roteiros
+                on item.RoteiroId equals roteiro.RoteiroId
+            where item.AtividadeId == id &&
+                  roteiro.UsuarioId == utilizadorId.Value
+            select item
+        ).FirstOrDefaultAsync();
+
         if (atividade is null)
         {
             return NotFound(new
@@ -172,13 +241,9 @@ public class AtividadesController : ControllerBase
             });
         }
 
-        // Marca a atividade para remoção.
         _context.Atividades.Remove(atividade);
-
-        // Confirma a remoção na base de dados.
         await _context.SaveChangesAsync();
 
-        // 204 significa: pedido concluído, sem conteúdo para devolver.
         return NoContent();
     }
 }
