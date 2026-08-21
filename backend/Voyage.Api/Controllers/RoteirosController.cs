@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Voyage.Api.Contracts;
@@ -6,6 +8,8 @@ using Voyage.Api.Models;
 
 namespace Voyage.Api.Controllers;
 
+// Exige um token JWT válido para usar qualquer rota deste controlador.
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class RoteirosController : ControllerBase
@@ -17,10 +21,29 @@ public class RoteirosController : ControllerBase
         _context = context;
     }
 
+    // Lê o identificador do utilizador que está dentro do token JWT.
+    private int? ObterIdDoUtilizadorAutenticado()
+    {
+        var identificador = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        return int.TryParse(identificador, out var utilizadorId)
+            ? utilizadorId
+            : null;
+    }
+
     [HttpGet]
     public async Task<IActionResult> ObterTodos()
     {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        // Devolve somente os roteiros que pertencem ao utilizador autenticado.
         var roteiros = await _context.Roteiros
+            .Where(roteiro => roteiro.UsuarioId == utilizadorId)
             .OrderBy(roteiro => roteiro.DataInicio)
             .Select(roteiro => new
             {
@@ -28,8 +51,7 @@ public class RoteirosController : ControllerBase
                 roteiro.Titulo,
                 roteiro.Destino,
                 roteiro.DataInicio,
-                roteiro.DataFim,
-                roteiro.UsuarioId
+                roteiro.DataFim
             })
             .ToListAsync();
 
@@ -37,8 +59,16 @@ public class RoteirosController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Criar([FromBody] CriarRoteiroRequest pedido)
+    public async Task<IActionResult> Criar(
+        [FromBody] CriarRoteiroRequest pedido)
     {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
         if (pedido.DataFim < pedido.DataInicio)
         {
             return BadRequest(new
@@ -47,24 +77,14 @@ public class RoteirosController : ControllerBase
             });
         }
 
-        var usuarioExiste = await _context.Usuarios
-            .AnyAsync(usuario => usuario.Id == pedido.UsuarioId);
-
-        if (!usuarioExiste)
-        {
-            return BadRequest(new
-            {
-                message = "O utilizador indicado não existe."
-            });
-        }
-
+        // O dono do roteiro vem do token, não do pedido enviado pelo cliente.
         var roteiro = new Roteiro
         {
             Titulo = pedido.Titulo,
             Destino = pedido.Destino,
             DataInicio = pedido.DataInicio,
             DataFim = pedido.DataFim,
-            UsuarioId = pedido.UsuarioId
+            UsuarioId = utilizadorId.Value
         };
 
         _context.Roteiros.Add(roteiro);
@@ -76,15 +96,22 @@ public class RoteirosController : ControllerBase
             roteiro.Titulo,
             roteiro.Destino,
             roteiro.DataInicio,
-            roteiro.DataFim,
-            roteiro.UsuarioId
+            roteiro.DataFim
         });
     }
+
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Atualizar(
         int id,
         [FromBody] AtualizarRoteiroRequest pedido)
     {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
         if (pedido.DataFim < pedido.DataInicio)
         {
             return BadRequest(new
@@ -93,7 +120,11 @@ public class RoteirosController : ControllerBase
             });
         }
 
-        var roteiro = await _context.Roteiros.FindAsync(id);
+        // Procura o roteiro e confirma que ele pertence ao utilizador autenticado.
+        var roteiro = await _context.Roteiros
+            .FirstOrDefaultAsync(roteiro =>
+                roteiro.RoteiroId == id &&
+                roteiro.UsuarioId == utilizadorId.Value);
 
         if (roteiro is null)
         {
@@ -116,14 +147,25 @@ public class RoteirosController : ControllerBase
             roteiro.Titulo,
             roteiro.Destino,
             roteiro.DataInicio,
-            roteiro.DataFim,
-            roteiro.UsuarioId
+            roteiro.DataFim
         });
     }
-        [HttpDelete("{id:int}")]
+
+    [HttpDelete("{id:int}")]
     public async Task<IActionResult> Apagar(int id)
     {
-        var roteiro = await _context.Roteiros.FindAsync(id);
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        // Só pode apagar um roteiro que seja seu.
+        var roteiro = await _context.Roteiros
+            .FirstOrDefaultAsync(roteiro =>
+                roteiro.RoteiroId == id &&
+                roteiro.UsuarioId == utilizadorId.Value);
 
         if (roteiro is null)
         {
