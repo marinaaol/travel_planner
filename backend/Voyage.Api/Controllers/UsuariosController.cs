@@ -1,16 +1,19 @@
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Voyage.Api.Data;
-using Microsoft.AspNetCore.Identity;
-using Voyage.Api.Contracts;
-using Voyage.Api.Models;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Voyage.Api.Contracts;
+using Voyage.Api.Data;
+using Voyage.Api.Models;
 
 namespace Voyage.Api.Controllers;
 
+// Por padrão, as rotas deste controlador exigem token JWT.
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class UsuariosController : ControllerBase
@@ -19,36 +22,30 @@ public class UsuariosController : ControllerBase
     private readonly IConfiguration _configuration;
 
     public UsuariosController(
-    VoyageDbContext context,
-    IConfiguration configuration)
-{
-    _context = context;
-    _configuration = configuration;
-}
-
-    [HttpGet]
-    public async Task<IActionResult> ObterTodos()
+        VoyageDbContext context,
+        IConfiguration configuration)
     {
-        var usuarios = await _context.Usuarios
-            .Select(usuario => new
-            {
-                usuario.Id,
-                usuario.Nome,
-                usuario.Email,
-                usuario.CriadoEm
-            })
-            .ToListAsync();
-
-        return Ok(usuarios);
+        _context = context;
+        _configuration = configuration;
     }
+
+    // Obtém o id da conta presente no token JWT.
+    private int? ObterIdDoUtilizadorAutenticado()
+    {
+        var identificador = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        return int.TryParse(identificador, out var utilizadorId)
+            ? utilizadorId
+            : null;
+    }
+
+    [AllowAnonymous]
     [HttpPost("registo")]
     public async Task<IActionResult> Registar(
         [FromBody] RegistarUtilizadorRequest pedido)
     {
-        // Remove espaços acidentais e mantém o e-mail num formato consistente.
         var emailNormalizado = pedido.Email.Trim().ToLowerInvariant();
 
-        // Impede o registo de duas contas com o mesmo e-mail.
         var emailJaExiste = await _context.Usuarios
             .AnyAsync(usuario => usuario.Email == emailNormalizado);
 
@@ -66,15 +63,14 @@ public class UsuariosController : ControllerBase
             Email = emailNormalizado
         };
 
-        // Converte a palavra-passe num hash antes de a guardar.
-        // O texto original da senha não entra na base de dados.
+        // Guarda apenas o hash, nunca a senha original.
         var hasher = new PasswordHasher<Usuario>();
         utilizador.SenhaHash = hasher.HashPassword(utilizador, pedido.Senha);
 
         _context.Usuarios.Add(utilizador);
         await _context.SaveChangesAsync();
 
-        return Created($"/api/usuarios/{utilizador.Id}", new
+        return Created($"/api/usuarios/perfil", new
         {
             utilizador.Id,
             utilizador.Nome,
@@ -82,16 +78,17 @@ public class UsuariosController : ControllerBase
             utilizador.CriadoEm
         });
     }
+
+    [AllowAnonymous]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest pedido)
     {
-        // Normaliza o e-mail para procurar a conta de forma consistente.
         var emailNormalizado = pedido.Email.Trim().ToLowerInvariant();
 
         var utilizador = await _context.Usuarios
             .FirstOrDefaultAsync(usuario => usuario.Email == emailNormalizado);
 
-        // A mesma mensagem evita revelar se o e-mail existe ou não.
+        // Não revela se o e-mail existe ou não.
         if (utilizador is null)
         {
             return Unauthorized(new
@@ -100,7 +97,6 @@ public class UsuariosController : ControllerBase
             });
         }
 
-        // Compara a senha enviada com o hash guardado no MySQL.
         var hasher = new PasswordHasher<Usuario>();
         var resultado = hasher.VerifyHashedPassword(
             utilizador,
@@ -116,7 +112,6 @@ public class UsuariosController : ControllerBase
             });
         }
 
-        // Obtém a chave e os dados que serão gravados no token.
         var jwtKey = _configuration["Jwt:Key"]
             ?? throw new InvalidOperationException("A chave JWT não foi encontrada.");
 
@@ -127,7 +122,6 @@ public class UsuariosController : ControllerBase
             _configuration["Jwt:ExpiresInMinutes"] ?? "60"
         );
 
-        // As claims são os dados de identidade dentro do token.
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, utilizador.Id.ToString()),
@@ -135,7 +129,6 @@ public class UsuariosController : ControllerBase
             new(ClaimTypes.Email, utilizador.Email)
         };
 
-        // Assina o token com a chave secreta.
         var credenciais = new SigningCredentials(
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
             SecurityAlgorithms.HmacSha256
@@ -159,6 +152,126 @@ public class UsuariosController : ControllerBase
                 utilizador.Nome,
                 utilizador.Email
             }
+        });
+    }
+
+    [HttpGet("perfil")]
+    public async Task<IActionResult> ObterPerfil()
+    {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        var utilizador = await _context.Usuarios.FindAsync(utilizadorId.Value);
+
+        if (utilizador is null)
+        {
+            return NotFound(new
+            {
+                message = "O utilizador indicado não existe."
+            });
+        }
+
+        // Nunca devolvemos o hash da senha.
+        return Ok(new
+        {
+            utilizador.Id,
+            utilizador.Nome,
+            utilizador.Email,
+            utilizador.CriadoEm
+        });
+    }
+
+    [HttpPut("perfil")]
+    public async Task<IActionResult> AtualizarPerfil(
+        [FromBody] AtualizarPerfilRequest pedido)
+    {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        var utilizador = await _context.Usuarios.FindAsync(utilizadorId.Value);
+
+        if (utilizador is null)
+        {
+            return NotFound(new
+            {
+                message = "O utilizador indicado não existe."
+            });
+        }
+
+        var emailNormalizado = pedido.Email.Trim().ToLowerInvariant();
+
+        // Verifica se o novo e-mail pertence a outra conta.
+        var emailJaExiste = await _context.Usuarios.AnyAsync(usuario =>
+            usuario.Email == emailNormalizado &&
+            usuario.Id != utilizadorId.Value);
+
+        if (emailJaExiste)
+        {
+            return Conflict(new
+            {
+                message = "Já existe uma conta associada a este e-mail."
+            });
+        }
+
+        utilizador.Nome = pedido.Nome.Trim();
+        utilizador.Email = emailNormalizado;
+
+        // Só altera a senha se uma nova senha tiver sido enviada.
+        if (!string.IsNullOrWhiteSpace(pedido.NovaSenha))
+        {
+            var hasher = new PasswordHasher<Usuario>();
+            utilizador.SenhaHash = hasher.HashPassword(
+                utilizador,
+                pedido.NovaSenha
+            );
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            utilizador.Id,
+            utilizador.Nome,
+            utilizador.Email,
+            utilizador.CriadoEm
+        });
+    }
+
+    [HttpDelete("perfil")]
+    public async Task<IActionResult> ApagarPerfil()
+    {
+        var utilizadorId = ObterIdDoUtilizadorAutenticado();
+
+        if (utilizadorId is null)
+        {
+            return Unauthorized();
+        }
+
+        var utilizador = await _context.Usuarios.FindAsync(utilizadorId.Value);
+
+        if (utilizador is null)
+        {
+            return NotFound(new
+            {
+                message = "O utilizador indicado não existe."
+            });
+        }
+
+        // O CASCADE do MySQL apaga também roteiros e atividades desta conta.
+        _context.Usuarios.Remove(utilizador);
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "A conta, os seus roteiros e as suas atividades foram eliminados permanentemente."
         });
     }
 }
