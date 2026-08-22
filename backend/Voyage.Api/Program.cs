@@ -8,6 +8,22 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
+// CORS autoriza o front-end local (Live Server) a comunicar com esta API.
+builder.Services.AddCors(opcoes =>
+{
+    opcoes.AddPolicy("FrontendLocal", politica =>
+    {
+        politica
+            .WithOrigins(
+                "http://localhost:5500",
+                "http://127.0.0.1:5500",
+                "http://127.0.0.1:5501"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // Lê a configuração da ligação ao MySQL.
 var connectionString = builder.Configuration.GetConnectionString("VoyageDatabase")
     ?? throw new InvalidOperationException(
@@ -60,6 +76,9 @@ builder.Services
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+// Aplica a autorização de origem definida acima aos pedidos recebidos.
+app.UseCors("FrontendLocal");
 
 // Lê e valida o token enviado em cada pedido protegido.
 app.UseAuthentication();
